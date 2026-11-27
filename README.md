@@ -30,6 +30,8 @@ El repositorio incluye configuración para CodeSandbox y Replit. En CodeSandbox,
 - Pruebas funcionales y manejo de errores.
 - Publicación remota y verificación del enlace final.
 
+La lista detallada de entregables de Stanley está disponible en [docs/TAREAS_STANLEY.md](docs/TAREAS_STANLEY.md).
+
 ## Prueba grupal obligatoria
 
 Cuando el enlace remoto esté publicado, Bryant y Stanley deben entrar personalmente y dejar un comentario. La entrega debe incluir el enlace remoto y los nombres de ambos participantes.
