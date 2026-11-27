@@ -25,6 +25,25 @@ function initials(string $name): string
     return $letters !== '' ? $letters : 'V';
 }
 
+function commentField(mixed $value): string
+{
+    if (!is_string($value)) {
+        return '';
+    }
+
+    return preg_replace('/^\s+|\s+$/u', '', $value) ?? $value;
+}
+
+function commentLength(string $value): int
+{
+    if (str_contains($value, "\0")) {
+        return 0;
+    }
+
+    $length = preg_match_all('/./us', $value);
+    return $length === false ? 0 : $length;
+}
+
 function formatDate(string $date): string
 {
     $timestamp = strtotime($date);
@@ -42,8 +61,8 @@ function formatDate(string $date): string
 function validateComment(array $input): array
 {
     $errors = [];
-    $nameLength = function_exists('mb_strlen') ? mb_strlen($input['name']) : strlen($input['name']);
-    $messageLength = function_exists('mb_strlen') ? mb_strlen($input['message']) : strlen($input['message']);
+    $nameLength = commentLength($input['name']);
+    $messageLength = commentLength($input['message']);
 
     if ($nameLength < 2 || $nameLength > 60) {
         $errors['name'] = 'Escribe un nombre de 2 a 60 caracteres.';

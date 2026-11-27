@@ -1,5 +1,9 @@
-run = "php -S 0.0.0.0:3000"
+run = "php -d display_errors=0 -S 0.0.0.0:3000 -t assets index.php"
 entrypoint = "index.php"
+
+[deployment]
+deploymentTarget = "autoscale"
+run = ["env", "VOCES_REQUIRE_DATABASE=1", "php", "-d", "display_errors=0", "-S", "0.0.0.0:3000", "-t", "assets", "index.php"]
 
 [[ports]]
 localPort = 3000

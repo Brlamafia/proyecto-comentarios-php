@@ -6,17 +6,30 @@ document.addEventListener('DOMContentLoaded', () => {
   const cards = [...document.querySelectorAll('[data-comment]')];
   const emptySearch = document.querySelector('#emptySearch');
 
+  const name = document.querySelector('#name');
+  const lengthOf = (value) => [...value.trim()].length;
+  const normalizeSearch = (value) => value.toLocaleLowerCase('es')
+    .normalize('NFD').replace(/[\u0300\u0301\u0308]/g, '').normalize('NFC');
+
   const updateCounter = () => {
     if (!message || !counter) return;
-    const length = message.value.length;
+    const length = lengthOf(message.value);
     counter.textContent = `${length} / 500`;
     counter.classList.toggle('text-danger', length > 500);
   };
 
-  message?.addEventListener('input', updateCounter);
+  name?.addEventListener('input', () => name.setCustomValidity(''));
+  message?.addEventListener('input', () => {
+    message.setCustomValidity('');
+    updateCounter();
+  });
   updateCounter();
 
   form?.addEventListener('submit', (event) => {
+    const nameLength = lengthOf(name.value);
+    const messageLength = lengthOf(message.value);
+    name.setCustomValidity(nameLength < 2 || nameLength > 60 ? 'Escribe un nombre de 2 a 60 caracteres.' : '');
+    message.setCustomValidity(messageLength < 10 || messageLength > 500 ? 'El comentario debe contener entre 10 y 500 caracteres.' : '');
     if (!form.checkValidity()) {
       event.preventDefault();
       event.stopPropagation();
@@ -25,21 +38,21 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   search?.addEventListener('input', () => {
-    const term = search.value.trim().toLocaleLowerCase('es');
+    const term = normalizeSearch(search.value.trim());
     let visible = 0;
 
     cards.forEach((card) => {
-      const match = card.textContent.toLocaleLowerCase('es').includes(term);
+      const match = normalizeSearch(card.textContent).includes(term);
       card.hidden = !match;
       if (match) visible += 1;
     });
 
-    if (emptySearch) emptySearch.hidden = visible !== 0;
+    if (emptySearch) emptySearch.hidden = term === '' || visible !== 0;
   });
 
   const alert = document.querySelector('.alert-dismissible');
   if (alert) {
-    window.setTimeout(() => bootstrap.Alert.getOrCreateInstance(alert).close(), 5000);
+    window.setTimeout(() => window.bootstrap?.Alert.getOrCreateInstance(alert).close(), 5000);
   }
 });
 

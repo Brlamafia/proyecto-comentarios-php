@@ -3,7 +3,7 @@
   "tasks": {
     "php-server": {
       "name": "Servidor PHP",
-      "command": "php -S 0.0.0.0:8000",
+      "command": "php -d display_errors=0 -S 0.0.0.0:8000 -t assets index.php",
       "runAtStart": true,
       "preview": {
         "port": 8000,
