@@ -20,8 +20,7 @@ final class CommentRepository
     /** @return list<array<string, string>> */
     private function readForDisplay(): array
     {
-        // Windows cannot replace a snapshot while another PHP process has it open.
-        if (PHP_OS_FAMILY !== 'Windows' || !file_exists($this->filePath)) {
+        if (!file_exists($this->filePath)) {
             return $this->readSnapshot();
         }
 
