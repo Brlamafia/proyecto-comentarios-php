@@ -1,0 +1,15 @@
+{
+  "$schema": "https://codesandbox.io/schemas/tasks.json",
+  "tasks": {
+    "php-server": {
+      "name": "Servidor PHP",
+      "command": "php -S 0.0.0.0:8000",
+      "runAtStart": true,
+      "preview": {
+        "port": 8000,
+        "prLink": "direct"
+      }
+    }
+  }
+}
+
