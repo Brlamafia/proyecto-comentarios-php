@@ -205,6 +205,7 @@ textarea.form-control { min-height: 145px; resize: vertical; }
   font-weight: 800;
 }
 
+.min-w-0 { min-width: 0; overflow-wrap: anywhere; }
 .comment-message { margin: 1rem 0 0; color: #3f4d61; line-height: 1.75; white-space: pre-line; }
 .comment-time { color: var(--muted); font-size: 0.82rem; }
 

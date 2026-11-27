@@ -2,13 +2,65 @@
 
 declare(strict_types=1);
 
-session_start();
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+
+$method = $_SERVER['REQUEST_METHOD'];
+$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$assets = [
+    '/assets/css/styles.css' => 'text/css; charset=UTF-8',
+    '/assets/js/app.js' => 'text/javascript; charset=UTF-8',
+];
+
+if (!in_array($path, ['/', '/index.php'], true) && !isset($assets[$path])) {
+    http_response_code(404);
+    exit;
+}
+if (!in_array($method, isset($assets[$path]) ? ['GET', 'HEAD'] : ['GET', 'HEAD', 'POST'], true)) {
+    header('Allow: ' . (isset($assets[$path]) ? 'GET, HEAD' : 'GET, HEAD, POST'));
+    http_response_code(405);
+    exit;
+}
+if (isset($assets[$path])) {
+    header('Content-Type: ' . $assets[$path]);
+    if ($method === 'GET') {
+        readfile(__DIR__ . $path);
+    }
+    exit;
+}
+
 date_default_timezone_set('America/Santo_Domingo');
+header("Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+    . "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+    . "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data:; "
+    . "object-src 'none'; base-uri 'none'; form-action 'self'");
+$production = getenv('VOCES_REQUIRE_DATABASE') === '1' || getenv('REPLIT_DEPLOYMENT') === '1';
+session_start([
+    'use_strict_mode' => 1,
+    'cookie_httponly' => true,
+    'cookie_secure' => $production || (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+    'cookie_samesite' => 'Lax',
+]);
 
 require_once __DIR__ . '/src/CommentRepository.php';
+require_once __DIR__ . '/src/PostgresCommentRepository.php';
 require_once __DIR__ . '/includes/functions.php';
 
-$repository = new CommentRepository(__DIR__ . '/data/comments.json');
+$repository = static function () use ($production): CommentRepository|PostgresCommentRepository {
+    $filePath = getenv('VOCES_COMMENTS_FILE');
+    $legacy = new CommentRepository($filePath === false || $filePath === ''
+        ? __DIR__ . '/data/comments.json'
+        : $filePath);
+    $databaseUrl = getenv('DATABASE_URL');
+    if (is_string($databaseUrl) && $databaseUrl !== '') {
+        return new PostgresCommentRepository($databaseUrl, $legacy);
+    }
+    if ($production) {
+        throw new RuntimeException('Se requiere PostgreSQL en producción.');
+    }
+
+    return $legacy;
+};
 $errors = $_SESSION['errors'] ?? [];
 $flash = $_SESSION['flash'] ?? null;
 unset($_SESSION['errors'], $_SESSION['flash']);
@@ -17,27 +69,32 @@ if (!isset($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim((string) ($_POST['name'] ?? ''));
-    $role = trim((string) ($_POST['role'] ?? ''));
-    $message = trim((string) ($_POST['message'] ?? ''));
-    $honeypot = trim((string) ($_POST['website'] ?? ''));
-    $token = (string) ($_POST['csrf_token'] ?? '');
+if ($method === 'POST') {
+    $name = commentField($_POST['name'] ?? null);
+    $role = commentField($_POST['role'] ?? null);
+    $message = commentField($_POST['message'] ?? null);
+    $honeypot = $_POST['website'] ?? '';
+    $token = $_POST['csrf_token'] ?? '';
 
-    $_SESSION['form_data'] = compact('name', 'role', 'message');
+    unset($_SESSION['form_data']);
 
-    if (!hash_equals($_SESSION['csrf_token'], $token)) {
+    if (!is_string($token) || !hash_equals($_SESSION['csrf_token'], $token)) {
         $_SESSION['errors'] = ['general' => 'La sesión expiró. Actualiza la página e intenta nuevamente.'];
-    } elseif ($honeypot !== '') {
+    } elseif (!is_string($honeypot) || trim($honeypot) !== '') {
         $_SESSION['errors'] = ['general' => 'No fue posible procesar la solicitud.'];
     } else {
-        $validationErrors = validateComment(compact('name', 'role', 'message'));
+        $fields = compact('name', 'role', 'message');
+        $validationErrors = validateComment($fields);
+        $_SESSION['form_data'] = array_filter(
+            $fields,
+            static fn (string $field): bool => strlen($field) <= 2000 && preg_match('//u', $field) === 1
+        );
 
         if ($validationErrors !== []) {
             $_SESSION['errors'] = $validationErrors;
         } else {
             try {
-                $repository->add(compact('name', 'role', 'message'));
+                $repository()->add($fields);
                 $_SESSION['flash'] = 'Tu comentario fue publicado correctamente.';
                 unset($_SESSION['form_data']);
             } catch (Throwable) {
@@ -46,15 +103,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    header('Location: ./#comentarios');
+    header('Location: ./#comentarios', true, 303);
     exit;
 }
 
 try {
-    $comments = $repository->all();
+    $comments = $repository()->all();
 } catch (Throwable) {
     $comments = [];
-    $errors['general'] = 'Los comentarios no están disponibles temporalmente.';
+    http_response_code(503);
+    $errors['general'] ??= 'Los comentarios no están disponibles temporalmente.';
 }
 ?>
 <!doctype html>
@@ -132,7 +190,7 @@ try {
 
                             <div class="mb-3">
                                 <label class="form-label" for="name">Nombre</label>
-                                <input class="form-control <?= isset($errors['name']) ? 'is-invalid' : '' ?>" id="name" name="name" value="<?= old('name') ?>" minlength="2" maxlength="60" placeholder="Ej. Bryant Romano" required>
+                                <input class="form-control <?= isset($errors['name']) ? 'is-invalid' : '' ?>" id="name" name="name" value="<?= old('name') ?>" placeholder="Ej. Bryant Romano" required>
                                 <div class="invalid-feedback"><?= escape($errors['name'] ?? 'Escribe tu nombre.') ?></div>
                             </div>
 
@@ -152,8 +210,8 @@ try {
                                     <label class="form-label" for="message">Comentario</label>
                                     <small class="text-secondary" id="characterCount">0 / 500</small>
                                 </div>
-                                <textarea class="form-control <?= isset($errors['message']) ? 'is-invalid' : '' ?>" id="message" name="message" minlength="10" maxlength="500" placeholder="Comparte tu opinión..." required><?= old('message') ?></textarea>
-                                <div class="invalid-feedback"><?= escape($errors['message'] ?? 'Escribe al menos 10 caracteres.') ?></div>
+                                <textarea class="form-control <?= isset($errors['message']) ? 'is-invalid' : '' ?>" id="message" name="message" placeholder="Comparte tu opinión..." required><?= old('message') ?></textarea>
+                                <div class="invalid-feedback"><?= escape($errors['message'] ?? 'El comentario debe contener entre 10 y 500 caracteres.') ?></div>
                             </div>
 
                             <p class="small text-secondary mb-3"><i class="bi bi-shield-check me-1" aria-hidden="true"></i>Tu comentario se almacena de forma segura en el servidor.</p>
@@ -194,7 +252,7 @@ try {
                                 </article>
                             <?php endforeach; ?>
 
-                            <?php if ($comments === []): ?>
+                            <?php if ($comments === [] && http_response_code() !== 503): ?>
                                 <div class="empty-state">
                                     <span class="empty-icon"><i class="bi bi-chat-heart" aria-hidden="true"></i></span>
                                     <h3 class="h5">Inicia la conversación</h3>

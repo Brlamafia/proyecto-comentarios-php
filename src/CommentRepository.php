@@ -6,79 +6,114 @@ final class CommentRepository
 {
     public function __construct(private readonly string $filePath)
     {
-        $directory = dirname($this->filePath);
+    }
 
-        if (!is_dir($directory)) {
-            mkdir($directory, 0775, true);
+    /** @return list<array<string, string>> */
+    public function all(): array
+    {
+        $comments = array_reverse($this->readForDisplay());
+        usort($comments, static fn (array $a, array $b): int => strtotime($b['created_at']) <=> strtotime($a['created_at']));
+
+        return $comments;
+    }
+
+    /** @return list<array<string, string>> */
+    private function readForDisplay(): array
+    {
+        // Windows cannot replace a snapshot while another PHP process has it open.
+        if (PHP_OS_FAMILY !== 'Windows' || !file_exists($this->filePath)) {
+            return $this->readSnapshot();
         }
 
-        if (!file_exists($this->filePath)) {
-            file_put_contents($this->filePath, "[]\n", LOCK_EX);
+        $lock = $this->openLock();
+        try {
+            if (!flock($lock, LOCK_SH)) {
+                throw new RuntimeException('No fue posible bloquear los comentarios para leerlos.');
+            }
+            return $this->readSnapshot();
+        } finally {
+            fclose($lock);
         }
     }
 
-    /** @return array<int, array<string, string>> */
-    public function all(): array
+    /** @return list<array<string, string>> */
+    private function readSnapshot(): array
     {
-        $handle = fopen($this->filePath, 'c+');
-
-        if ($handle === false) {
-            throw new RuntimeException('No fue posible abrir el archivo de comentarios.');
-        }
-
-        try {
-            flock($handle, LOCK_SH);
-            rewind($handle);
-            $contents = stream_get_contents($handle) ?: '[]';
-            $comments = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
-        } finally {
-            flock($handle, LOCK_UN);
-            fclose($handle);
-        }
-
-        if (!is_array($comments)) {
+        // Writers publish a complete snapshot with rename(). Open readers retain their snapshot.
+        if (!file_exists($this->filePath)) {
             return [];
         }
 
-        usort($comments, static fn (array $a, array $b): int => strcmp($b['created_at'], $a['created_at']));
+        $contents = @file_get_contents($this->filePath);
+        if ($contents === false) {
+            throw new RuntimeException('No fue posible leer los comentarios.');
+        }
+
+        $comments = json_decode($contents, false, 512, JSON_THROW_ON_ERROR);
+        if (!is_array($comments)) {
+            throw new RuntimeException('Formato de comentarios inválido.');
+        }
+
+        foreach ($comments as &$comment) {
+            foreach (['id', 'name', 'role', 'message', 'created_at'] as $field) {
+                if (!is_string($comment->$field ?? null)) {
+                    throw new RuntimeException('Registro de comentario inválido.');
+                }
+            }
+            $comment = (array) $comment;
+        }
+        unset($comment);
 
         return $comments;
+    }
+
+    /** @return resource */
+    private function openLock()
+    {
+        $lock = @fopen($this->filePath . '.lock', 'c');
+        if ($lock === false) {
+            throw new RuntimeException('No fue posible abrir el bloqueo de comentarios.');
+        }
+
+        return $lock;
     }
 
     /** @param array{name: string, role: string, message: string} $data */
     public function add(array $data): void
     {
-        $handle = fopen($this->filePath, 'c+');
-
-        if ($handle === false) {
-            throw new RuntimeException('No fue posible guardar el comentario.');
+        $directory = dirname($this->filePath);
+        if (!is_dir($directory) && !@mkdir($directory, 0775, true) && !is_dir($directory)) {
+            throw new RuntimeException('No fue posible crear el directorio de comentarios.');
         }
 
+        // The lock belongs to a separate file so replacing the snapshot cannot replace the lock.
+        $lock = $this->openLock();
+        $temporaryPath = null;
         try {
-            if (!flock($handle, LOCK_EX)) {
-                throw new RuntimeException('El archivo está ocupado. Intenta nuevamente.');
+            if (!flock($lock, LOCK_EX)) {
+                throw new RuntimeException('No fue posible bloquear los comentarios.');
             }
 
-            rewind($handle);
-            $contents = stream_get_contents($handle) ?: '[]';
-            $comments = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
-            $comments = is_array($comments) ? $comments : [];
-
+            $comments = $this->readSnapshot();
             $comments[] = [
-                'id' => bin2hex(random_bytes(8)),
-                'name' => $data['name'],
-                'role' => $data['role'],
-                'message' => $data['message'],
+                'id' => bin2hex(random_bytes(16)),
+                ...$data,
                 'created_at' => date(DATE_ATOM),
             ];
+            $json = json_encode($comments, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . PHP_EOL;
 
-            rewind($handle);
-            ftruncate($handle, 0);
-            fwrite($handle, json_encode($comments, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . PHP_EOL);
-            fflush($handle);
+            $temporaryPath = @tempnam($directory, '.comments-');
+            if ($temporaryPath === false || dirname($temporaryPath) !== realpath($directory)
+                || @file_put_contents($temporaryPath, $json) !== strlen($json)
+                || !@rename($temporaryPath, $this->filePath)) {
+                throw new RuntimeException('No fue posible guardar los comentarios.');
+            }
+            $temporaryPath = null;
         } finally {
-            flock($handle, LOCK_UN);
-            fclose($handle);
+            if (is_string($temporaryPath)) {
+                @unlink($temporaryPath);
+            }
+            fclose($lock);
         }
     }
 }
